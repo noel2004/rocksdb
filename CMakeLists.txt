@@ -34,7 +34,8 @@ execute_process(COMMAND powershell -Command "Get-Date -format MM_dd_yyyy" OUTPUT
 execute_process(COMMAND powershell -Command "Get-Date -format HH:mm:ss" OUTPUT_VARIABLE TIME)
 string(REGEX REPLACE "(..)_(..)_..(..).*" "\\1/\\2/\\3" DATE ${DATE})
 string(REGEX REPLACE "(..):(.....).*" " \\1:\\2" TIME ${TIME})
-string(CONCAT GIT_DATE_TIME ${DATE} ${TIME})
+#string(CONCAT GIT_DATE_TIME ${DATE} ${TIME})
+set(GIT_DATE_TIME "2015/1/30 20:18")
 
 find_package(Git)
 

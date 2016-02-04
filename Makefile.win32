@@ -1,0 +1,298 @@
+CXXFLAGS += --std=c++11
+ARFLAGS = rs
+
+# Transform parallel LOG output into something more readable.
+perl_command = perl -n \
+  -e '@a=split("\t",$$_,-1); $$t=$$a[8]; $$t =~ s,^\./,,;'		\
+  -e '$$t =~ s, >.*,,; chomp $$t;'					\
+  -e '$$t =~ /.*--gtest_filter=(.*?\.[\w\/]+)/ and $$t=$$1;'		\
+  -e 'printf "%7.3f %s %s\n", $$a[3], $$a[6] == 0 ? "PASS" : "FAIL", $$t'
+quoted_perl_command = $(subst ','\'',$(perl_command))
+
+OPT += -DOS_WIN -D_WIN32_WINNT=0x0601
+DEBUG_LEVEL=0
+OPT += -DNDEBUG
+OPT += -O2 -fno-omit-frame-pointer
+DISABLE_WARNING_AS_ERROR=1
+
+#-----------------------------------------------
+#include src.mk
+# These are the sources from which librocksdb.a is built:
+LIB_SOURCES =                                                   \
+  db/builder.cc                                                 \
+  db/c.cc                                                       \
+  db/column_family.cc                                           \
+  db/compacted_db_impl.cc                                       \
+  db/compaction.cc                                              \
+  db/compaction_iterator.cc                                     \
+  db/compaction_job.cc                                          \
+  db/compaction_picker.cc                                       \
+  db/convenience.cc                                             \
+  db/db_filesnapshot.cc                                         \
+  db/dbformat.cc                                                \
+  db/db_impl.cc                                                 \
+  db/db_impl_debug.cc                                           \
+  db/db_impl_readonly.cc                                        \
+  db/db_impl_experimental.cc                                    \
+  db/db_iter.cc                                                 \
+  db/experimental.cc                                            \
+  db/event_helpers.cc                                           \
+  db/file_indexer.cc                                            \
+  db/filename.cc                                                \
+  db/flush_job.cc                                               \
+  db/flush_scheduler.cc                                         \
+  db/forward_iterator.cc                                        \
+  db/internal_stats.cc                                          \
+  db/log_reader.cc                                              \
+  db/log_writer.cc                                              \
+  db/managed_iterator.cc                                        \
+  db/memtable_allocator.cc                                      \
+  db/memtable.cc                                                \
+  db/memtable_list.cc                                           \
+  db/merge_helper.cc                                            \
+  db/merge_operator.cc                                          \
+  db/repair.cc                                                  \
+  db/slice.cc                                                   \
+  db/snapshot_impl.cc                                           \
+  db/table_cache.cc                                             \
+  db/table_properties_collector.cc                              \
+  db/transaction_log_impl.cc                                    \
+  db/version_builder.cc                                         \
+  db/version_edit.cc                                            \
+  db/version_set.cc                                             \
+  db/wal_manager.cc                                             \
+  db/write_batch.cc                                             \
+  db/write_batch_base.cc                                        \
+  db/write_controller.cc                                        \
+  db/write_thread.cc                                            \
+  memtable/hash_cuckoo_rep.cc                                   \
+  memtable/hash_linklist_rep.cc                                 \
+  memtable/hash_skiplist_rep.cc                                 \
+  port/win/env_win.cc                                           \
+  port/win/port_win.cc                                          \
+  port/win/win_logger.cc                                        \
+  table/adaptive_table_factory.cc                               \
+  table/block_based_filter_block.cc                             \
+  table/block_based_table_builder.cc                            \
+  table/block_based_table_factory.cc                            \
+  table/block_based_table_reader.cc                             \
+  table/block_builder.cc                                        \
+  table/block.cc                                                \
+  table/block_hash_index.cc                                     \
+  table/block_prefix_index.cc                                   \
+  table/bloom_block.cc                                          \
+  table/cuckoo_table_builder.cc                                 \
+  table/cuckoo_table_factory.cc                                 \
+  table/cuckoo_table_reader.cc                                  \
+  table/flush_block_policy.cc                                   \
+  table/format.cc                                               \
+  table/full_filter_block.cc                                    \
+  table/get_context.cc                                          \
+  table/iterator.cc                                             \
+  table/merger.cc                                               \
+  table/meta_blocks.cc                                          \
+  table/sst_file_writer.cc                                      \
+  table/plain_table_builder.cc                                  \
+  table/plain_table_factory.cc                                  \
+  table/plain_table_index.cc                                    \
+  table/plain_table_key_coding.cc                               \
+  table/plain_table_reader.cc                                   \
+  table/table_properties.cc                                     \
+  table/two_level_iterator.cc                                   \
+  tools/dump/db_dump_tool.cc                                    \
+  util/arena.cc                                                 \
+  util/auto_roll_logger.cc                                      \
+  util/bloom.cc                                                 \
+  util/build_version.cc                                         \
+  util/cache.cc                                                 \
+  util/coding.cc                                                \
+  util/comparator.cc                                            \
+  util/compaction_job_stats_impl.cc                             \
+  util/concurrent_arena.cc                                      \
+  util/crc32c.cc                                                \
+  util/db_info_dumper.cc                                        \
+  util/delete_scheduler_impl.cc                                 \
+  util/dynamic_bloom.cc                                         \
+  util/env.cc                                                   \
+  util/env_hdfs.cc                                              \
+  util/file_util.cc                                             \
+  util/file_reader_writer.cc                                    \
+  util/filter_policy.cc                                         \
+  util/hash.cc                                                  \
+  util/histogram.cc                                             \
+  util/instrumented_mutex.cc                                    \
+  util/iostats_context.cc                                       \
+  utilities/backupable/backupable_db.cc                         \
+  utilities/convenience/info_log_finder.cc                      \
+  utilities/checkpoint/checkpoint.cc                            \
+  utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc    \
+  utilities/document/document_db.cc                             \
+  utilities/document/json_document_builder.cc                   \
+  utilities/document/json_document.cc                           \
+  utilities/env_mirror.cc                                       \
+  utilities/flashcache/flashcache.cc                            \
+  utilities/geodb/geodb_impl.cc                                 \
+  utilities/leveldb_options/leveldb_options.cc                  \
+  utilities/memory/memory_util.cc                               \
+  utilities/merge_operators/put.cc                              \
+  utilities/merge_operators/string_append/stringappend2.cc      \
+  utilities/merge_operators/string_append/stringappend.cc       \
+  utilities/merge_operators/uint64add.cc                        \
+  utilities/options/options_util.cc                             \
+  utilities/redis/redis_lists.cc                                \
+  utilities/spatialdb/spatial_db.cc                             \
+  utilities/table_properties_collectors/compact_on_deletion_collector.cc \
+  utilities/transactions/optimistic_transaction_impl.cc         \
+  utilities/transactions/optimistic_transaction_db_impl.cc      \
+  utilities/transactions/transaction_base.cc                    \
+  utilities/transactions/transaction_db_impl.cc                 \
+  utilities/transactions/transaction_db_mutex_impl.cc           \
+  utilities/transactions/transaction_lock_mgr.cc                \
+  utilities/transactions/transaction_impl.cc                    \
+  utilities/transactions/transaction_util.cc                    \
+  utilities/ttl/db_ttl_impl.cc                                  \
+  utilities/write_batch_with_index/write_batch_with_index.cc    \
+  utilities/write_batch_with_index/write_batch_with_index_internal.cc    \
+  util/event_logger.cc                                          \
+  util/log_buffer.cc                                            \
+  util/logging.cc                                               \
+  util/memenv.cc                                                \
+  util/murmurhash.cc                                            \
+  util/mutable_cf_options.cc                                    \
+  util/options.cc                                               \
+  util/options_builder.cc                                       \
+  util/options_helper.cc                                        \
+  util/options_parser.cc                                        \
+  util/options_sanity_check.cc                                  \
+  util/perf_context.cc                                          \
+  util/perf_level.cc                                            \
+  util/random.cc                                                \
+  util/rate_limiter.cc                                          \
+  util/skiplistrep.cc                                           \
+  util/slice.cc                                                 \
+  util/statistics.cc                                            \
+  util/status.cc                                                \
+  util/status_message.cc                                        \
+  util/string_util.cc                                           \
+  util/sync_point.cc                                            \
+  util/thread_local.cc                                          \
+  util/thread_status_impl.cc                                    \
+  util/thread_status_updater.cc                                 \
+  util/thread_status_updater_debug.cc                           \
+  util/thread_status_util.cc                                    \
+  util/thread_status_util_debug.cc                              \
+  util/vectorrep.cc                                             \
+  util/xfunc.cc                                                 \
+  util/xxhash.cc                                                \
+
+TOOL_SOURCES = \
+  tools/ldb_cmd.cc                                               \
+  tools/ldb_tool.cc                                              \
+  tools/sst_dump_tool.cc                                         \
+
+GTEST_DIR = ./third-party/gtest-1.7.0/fused-src
+
+AM_DEFAULT_VERBOSITY = 0
+
+AM_V_GEN = $(am__v_GEN_$(V))
+am__v_GEN_ = $(am__v_GEN_$(AM_DEFAULT_VERBOSITY))
+am__v_GEN_0 = @echo "  GEN     " $@;
+am__v_GEN_1 =
+AM_V_at = $(am__v_at_$(V))
+am__v_at_ = $(am__v_at_$(AM_DEFAULT_VERBOSITY))
+am__v_at_0 = @
+am__v_at_1 =
+
+AM_V_CC = $(am__v_CC_$(V))
+am__v_CC_ = $(am__v_CC_$(AM_DEFAULT_VERBOSITY))
+am__v_CC_0 = @echo "  CC      " $@;
+am__v_CC_1 =
+CCLD = $(CC)
+LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+AM_V_CCLD = $(am__v_CCLD_$(V))
+am__v_CCLD_ = $(am__v_CCLD_$(AM_DEFAULT_VERBOSITY))
+am__v_CCLD_0 = @echo "  CCLD    " $@;
+am__v_CCLD_1 =
+AM_V_AR = $(am__v_AR_$(V))
+am__v_AR_ = $(am__v_AR_$(AM_DEFAULT_VERBOSITY))
+am__v_AR_0 = @echo "  AR      " $@;
+am__v_AR_1 =
+
+AM_LINK = $(AM_V_CCLD)$(CXX) $^ $(EXEC_LDFLAGS) -o $@ $(LDFLAGS) $(COVERAGEFLAGS)
+
+#the first rule
+default: static_lib
+
+WARNING_FLAGS = -W -Wextra -Wall -Wsign-compare -Wshadow \
+  -Wno-unused-parameter
+
+CFLAGS += $(WARNING_FLAGS) -I. -I./include -isystem $(GTEST_DIR) $(OPT)
+CXXFLAGS += $(WARNING_FLAGS) -I. -I./include -isystem $(GTEST_DIR) $(OPT) -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers
+
+date := $(shell date +%F)
+git_sha := $(shell git rev-parse HEAD 2>/dev/null)
+gen_build_version =							\
+  printf '%s\n'								\
+    '\#include "build_version.h"'					\
+    'const char* rocksdb_build_git_sha =				\
+      "rocksdb_build_git_sha:$(git_sha)";'			\
+    'const char* rocksdb_build_git_date =				\
+      "rocksdb_build_git_date:$(date)";'				\
+    'const char* rocksdb_build_compile_date = __DATE__;'
+
+CLEAN_FILES += util/build_version.cc:
+FORCE:
+util/build_version.cc: FORCE
+	$(AM_V_GEN)rm -f $@-t
+	$(AM_V_at)$(gen_build_version) > $@-t
+	$(AM_V_at)if test -f $@; then					\
+	  cmp -s $@-t $@ && rm -f $@-t || mv -f $@-t $@;		\
+	else mv -f $@-t $@; fi
+
+LIBOBJECTS = $(LIB_SOURCES:.cc=.o)
+LIBOBJECTS += $(TOOL_SOURCES:.cc=.o)
+
+GTEST = $(GTEST_DIR)/gtest/gtest-all.o
+LIBOBJECTS += $(GTEST)
+
+LIBNAME=librocksdb
+LIBRARY = ${LIBNAME}.a
+
+LDFLAGS += -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 -lshlwapi -lrpcrt4
+SHARED = ${LIBNAME}.dll
+SHARED_LIB = ${LIBNAME}_dll.a
+
+$(SHARED): $(LIBOBJECTS)
+	$(AM_V_CC)$(CXX) -shared $(CXXFLAGS) $(LIBOBJECTS) $(LDFLAGS) -Wl,--out-implib,$(SHARED_LIB) -o $@
+
+.PHONY: static_lib shared_lib
+
+static_lib: $(LIBRARY)
+
+shared_lib: $(SHARED)
+
+$(LIBRARY): $(LIBOBJECTS)
+	$(AM_V_AR)rm -f $@
+	$(AM_V_at)$(AR) $(ARFLAGS) $@ $(LIBOBJECTS)
+
+.o:
+	$(AM_V_CC)$(CXX) $(CXXFLAGS) -cs $< -o $@ 
+
+all_sources = $(LIB_SOURCES) $(TOOL_SOURCES)
+DEPFILES = $(all_sources:.cc=.d)
+
+# Add proper dependency support so changing a .h file forces a .cc file to
+# rebuild.
+
+# The .d file indicates .cc file's dependencies on .h files. We generate such
+# dependency by g++'s -MM option, whose output is a make dependency rule.
+$(DEPFILES): %.d: %.cc
+	@$(CXX) $(CXXFLAGS) $(PLATFORM_SHARED_CFLAGS) \
+	  -MM -MT'$@' -MT'$(<:.cc=.o)' "$<" -o '$@'
+
+depend: $(DEPFILES)
+
+clean:
+	rm -f $(LIBRARY) $(SHARED)
+	find . -name "*.[oda]" -exec rm -f {} \;
+	find . -type f -regex ".*\.\(\(gcda\)\|\(gcno\)\)" -exec rm {} \;

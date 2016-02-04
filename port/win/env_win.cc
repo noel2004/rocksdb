@@ -1681,7 +1681,7 @@ class WinEnv : public Env {
     if (GetSystemTimePreciseAsFileTime_ != NULL) {
       // all std::chrono clocks on windows proved to return
       // values that may repeat that is not good enough for some uses.
-      const int64_t c_UnixEpochStartTicks = 116444736000000000i64;
+      const int64_t c_UnixEpochStartTicks = 116444736000000000ll;
       const int64_t c_FtToMicroSec = 10;
 
       // This interface needs to return system time and not
