@@ -1,7 +1,8 @@
-# This cmake build is for Windows 64-bit only.
+# Prerequisites for Windows:
+#     This cmake build is for Windows 64-bit only.
 #
 # Prerequisites:
-#     You must have Visual Studio 2013 Update 4 installed. Start the Developer Command Prompt window that is a part of Visual Studio installation.
+#     You must have at least Visual Studio 2015 Update 3. Start the Developer Command Prompt window that is a part of Visual Studio installation.
 #     Run the build commands from within the Developer Command Prompt window to have paths to the compiler and runtime libraries set.
 #     You must have git.exe in your %PATH% environment variable.
 #
@@ -13,8 +14,7 @@
 #        cd build
 # 3. Run cmake to generate project files for Windows, add more options to enable required third-party libraries.
 #    See thirdparty.inc for more information.
-#        sample command: cmake -G "Visual Studio 12 Win64" -DGFLAGS=1 -DSNAPPY=1 -DJEMALLOC=1 -DJNI=1 ..
-#        OR for VS Studio 15 cmake -G "Visual Studio 14 Win64" -DGFLAGS=1 -DSNAPPY=1 -DJEMALLOC=1 -DJNI=1 ..
+#        sample command: cmake -G "Visual Studio 14 Win64" -DGFLAGS=1 -DSNAPPY=1 -DJEMALLOC=1 -DJNI=1 ..
 # 4. Then build the project in debug mode (you may want to add /m[:<N>] flag to run msbuild in <N> parallel threads
 #                                          or simply /m ot use all avail cores)
 #        msbuild rocksdb.sln
@@ -25,41 +25,210 @@
 # 5. And release mode (/m[:<N>] is also supported)
 #        msbuild rocksdb.sln /p:Configuration=Release
 #
+# Linux:
+#
+# 1. Install a recent toolchain such as devtoolset-3 if you're on a older distro. C++11 required.
+# 2. mkdir build; cd build
+# 3. cmake ..
+# 4. make -j
 
 cmake_minimum_required(VERSION 2.6)
 project(rocksdb)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/thirdparty.inc)
-execute_process(COMMAND powershell -Command "Get-Date -format MM_dd_yyyy" OUTPUT_VARIABLE DATE)
-execute_process(COMMAND powershell -Command "Get-Date -format HH:mm:ss" OUTPUT_VARIABLE TIME)
-string(REGEX REPLACE "(..)_(..)_..(..).*" "\\1/\\2/\\3" DATE "${DATE}")
-string(REGEX REPLACE "(..):(.....).*" " \\1:\\2" TIME "${TIME}")
-string(CONCAT GIT_DATE_TIME ${DATE} ${TIME})
+if(POLICY CMP0042)
+  cmake_policy(SET CMP0042 NEW)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
+
+if(MSVC)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/thirdparty.inc)
+else()
+  option(WITH_JEMALLOC "build with JeMalloc" OFF)
+  if(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+    # FreeBSD has jemaloc as default malloc
+    # but it does not have all the jemalloc files in include/...
+    set(WITH_JEMALLOC ON)
+  else()
+    if(WITH_JEMALLOC)
+      find_package(JeMalloc REQUIRED)
+      add_definitions(-DROCKSDB_JEMALLOC -DJEMALLOC_NO_DEMANGLE)
+      include_directories(${JEMALLOC_INCLUDE_DIR})
+    endif()
+  endif()
+  option(WITH_SNAPPY "build with SNAPPY" OFF)
+  if(WITH_SNAPPY)
+    find_package(snappy REQUIRED)
+    add_definitions(-DSNAPPY)
+    include_directories(${SNAPPY_INCLUDE_DIR})
+    list(APPEND THIRDPARTY_LIBS ${SNAPPY_LIBRARIES})
+  endif()
+endif()
+
+if(WIN32)
+  execute_process(COMMAND powershell -noprofile -Command "Get-Date -format MM_dd_yyyy" OUTPUT_VARIABLE DATE)
+  execute_process(COMMAND powershell -noprofile -Command "Get-Date -format HH:mm:ss" OUTPUT_VARIABLE TIME)
+  string(REGEX REPLACE "(..)_(..)_..(..).*" "\\1/\\2/\\3" DATE "${DATE}")
+  string(REGEX REPLACE "(..):(.....).*" " \\1:\\2" TIME "${TIME}")
+  set(GIT_DATE_TIME "${DATE} ${TIME}")
+else()
+  execute_process(COMMAND date "+%Y/%m/%d %H:%M:%S" OUTPUT_VARIABLE DATETIME)
+  string(REGEX REPLACE "\n" "" DATETIME ${DATETIME})
+  set(GIT_DATE_TIME "${DATETIME}")
+endif()
 
 find_package(Git)
 
-if (GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+  if(WIN32)
     execute_process(COMMAND $ENV{COMSPEC} /C ${GIT_EXECUTABLE} -C ${CMAKE_CURRENT_SOURCE_DIR} rev-parse HEAD OUTPUT_VARIABLE GIT_SHA)
+  else()
+    execute_process(COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_CURRENT_SOURCE_DIR} rev-parse HEAD OUTPUT_VARIABLE GIT_SHA)
+  endif()
 else()
-    set(GIT_SHA 0)
+  set(GIT_SHA 0)
 endif()
 
 string(REGEX REPLACE "[^0-9a-f]+" "" GIT_SHA "${GIT_SHA}")
 
-set(BUILD_VERSION_CC ${CMAKE_CURRENT_SOURCE_DIR}/util/build_version.cc)
+if(NOT WIN32)
+  execute_process(COMMAND
+      "./build_tools/version.sh" "full"
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      OUTPUT_VARIABLE ROCKSDB_VERSION
+  )
+  string(STRIP "${ROCKSDB_VERSION}" ROCKSDB_VERSION)
+  execute_process(COMMAND
+      "./build_tools/version.sh" "major"
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      OUTPUT_VARIABLE ROCKSDB_VERSION_MAJOR
+  )
+  string(STRIP "${ROCKSDB_VERSION_MAJOR}" ROCKSDB_VERSION_MAJOR)
+endif()
 
-add_custom_command(OUTPUT ${BUILD_VERSION_CC}
-    COMMAND echo "#include \"build_version.h\"" > ${BUILD_VERSION_CC}
-    COMMAND echo "const char* rocksdb_build_git_sha = \"rocksdb_build_git_sha:${GIT_SHA}\";" >> ${BUILD_VERSION_CC}
-    COMMAND echo "const char* rocksdb_build_git_datetime = \"rocksdb_build_git_datetime:${GIT_DATE_TIME}\";" >> ${BUILD_VERSION_CC}
-    COMMAND echo const char* rocksdb_build_compile_date = __DATE__\; >> ${BUILD_VERSION_CC}
-)
+option(WITH_MD_LIBRARY "build with MD" ON)
+if(WIN32 AND MSVC)
+  if(WITH_MD_LIBRARY)
+    set(RUNTIME_LIBRARY "MD")
+  else()
+    set(RUNTIME_LIBRARY "MT")
+  endif()
+endif()
 
-add_custom_target(GenerateBuildVersion DEPENDS ${BUILD_VERSION_CC})
+option(PORTABLE "build a portable binary" OFF)
+option(FORCE_SSE42 "force building with SSE4.2, even when PORTABLE=ON" OFF)
+if(PORTABLE)
+  # MSVC does not need a separate compiler flag to enable SSE4.2; if nmmintrin.h
+  # is available, it is available by default.
+  if(FORCE_SSE42 AND NOT MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse4.2")
+  endif()
+else()
+  if(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
+  else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+  endif()
+endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zi /nologo  /EHsc /GS /Gd /GR /GF /fp:precise /Zc:wchar_t /Zc:forScope /errorReport:queue")
+set(CMAKE_REQUIRED_FLAGS ${CMAKE_CXX_FLAGS})
+include(CheckCXXSourceCompiles)
+CHECK_CXX_SOURCE_COMPILES("
+#include <cstdint>
+#include <nmmintrin.h>
+int main() {
+  volatile uint32_t x = _mm_crc32_u32(0, 0);
+}
+" HAVE_SSE42)
+if(HAVE_SSE42)
+  add_definitions(-DHAVE_SSE42)
+elseif(FORCE_SSE42)
+  message(FATAL_ERROR "FORCE_SSE42=ON but unable to compile with SSE4.2 enabled")
+endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FC /d2Zi+ /W3 /WX /wd4127 /wd4800 /wd4996 /wd4351")
+CHECK_CXX_SOURCE_COMPILES("
+#if defined(_MSC_VER) && !defined(__thread)
+#define __thread __declspec(thread)
+#endif
+int main() {
+  static __thread int tls;
+}
+" HAVE_THREAD_LOCAL)
+if(HAVE_THREAD_LOCAL)
+  add_definitions(-DROCKSDB_SUPPORT_THREAD_LOCAL)
+endif()
+
+set(BUILD_VERSION_CC ${CMAKE_BINARY_DIR}/build_version.cc)
+file(GENERATE OUTPUT ${BUILD_VERSION_CC} CONTENT
+  "#include \"build_version.h\"
+const char* rocksdb_build_git_sha = \"rocksdb_build_git_sha:${GIT_SHA}\";
+const char* rocksdb_build_git_datetime = \"rocksdb_build_git_datetime:${GIT_DATE_TIME}\";
+const char* rocksdb_build_compile_date = __DATE__;
+")
+add_library(build_version OBJECT ${BUILD_VERSION_CC})
+target_include_directories(build_version PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/util)
+if(MSVC)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zi /nologo /EHsc /GS /Gd /GR /GF /fp:precise /Zc:wchar_t /Zc:forScope /errorReport:queue")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FC /d2Zi+ /W3 /wd4127 /wd4800 /wd4996 /wd4351")
+else()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wextra -Wall")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsign-compare -Wshadow -Wno-unused-parameter -Wno-unused-variable -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers")
+  if(MINGW)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-format")
+  endif()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_definitions(-DNDEBUG)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -fno-omit-frame-pointer")
+    include(CheckCXXCompilerFlag)
+    CHECK_CXX_COMPILER_FLAG("-momit-leaf-frame-pointer" HAVE_OMIT_LEAF_FRAME_POINTER)
+    if(HAVE_OMIT_LEAF_FRAME_POINTER)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -momit-leaf-frame-pointer")
+    endif()
+  endif()
+endif()
+
+option(FAIL_ON_WARNINGS "Treat compile warnings as errors" ON)
+if(FAIL_ON_WARNINGS)
+  if(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX")
+  else() # assume GCC
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+  endif()
+endif()
+
+option(WITH_ASAN "build with ASAN" OFF)
+if(WITH_ASAN)
+  add_definitions(-DROCKSDB_TSAN_RUN)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+  if(WITH_JEMALLOC)
+    message(FATAL "ASAN does not work well with JeMalloc")
+  endif()
+endif()
+
+option(WITH_TSAN "build with TSAN" OFF)
+if(WITH_TSAN)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread -pie")
+  add_definitions(-DROCKSDB_TSAN_RUN)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fPIC")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -fPIC")
+  if(WITH_JEMALLOC)
+    message(FATAL "TSAN does not work well with JeMalloc")
+  endif()
+endif()
+
+option(WITH_UBSAN "build with UBSAN" OFF)
+if(WITH_UBSAN)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=undefined")
+  if(WITH_JEMALLOC)
+    message(FATAL "UBSAN does not work well with JeMalloc")
+  endif()
+endif()
 
 # Used to run CI build and tests so we can run faster
 set(OPTIMIZE_DEBUG_DEFAULT 0)        # Debug build is unoptimized by default use -DOPTDBG=1 to optimize
@@ -70,33 +239,95 @@ else()
    set(OPTIMIZE_DEBUG ${OPTIMIZE_DEBUG_DEFAULT})
 endif()
 
-if((${OPTIMIZE_DEBUG} EQUAL 1))
-   message(STATUS "Debug optimization is enabled")
-   set(CMAKE_CXX_FLAGS_DEBUG "/Oxt /MDd")
-else()
-   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Od /RTC1 /Gm /MDd")
+if(MSVC)
+  if((${OPTIMIZE_DEBUG} EQUAL 1))
+    message(STATUS "Debug optimization is enabled")
+    set(CMAKE_CXX_FLAGS_DEBUG "/Oxt /${RUNTIME_LIBRARY}d")
+  else()
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Od /RTC1 /Gm /${RUNTIME_LIBRARY}d")
+  endif()
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Oxt /Zp8 /Gm- /Gy /${RUNTIME_LIBRARY}")
+
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Oxt /Zp8 /Gm- /Gy /MD")
+if(CMAKE_COMPILER_IS_GNUCXX)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-memcmp")
+endif()
 
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
+option(ROCKSDB_LITE "Build RocksDBLite version" OFF)
+if(ROCKSDB_LITE)
+  add_definitions(-DROCKSDB_LITE)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
+endif()
 
-add_definitions(-DWIN32 -DOS_WIN -D_MBCS -DWIN64 -DNOMINMAX)
+if(CMAKE_SYSTEM_NAME MATCHES "Cygwin")
+  add_definitions(-fno-builtin-memcmp -DCYGWIN)
+elseif(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  add_definitions(-DOS_MACOSX)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES arm)
+    add_definitions(-DIOS_CROSS_COMPILE -DROCKSDB_LITE)
+    # no debug info for IOS, that will make our library big
+    add_definitions(-DNDEBUG)
+  endif()
+elseif(CMAKE_SYSTEM_NAME MATCHES "Linux")
+  add_definitions(-DOS_LINUX)
+elseif(CMAKE_SYSTEM_NAME MATCHES "SunOS")
+  add_definitions(-DOS_SOLARIS)
+elseif(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+  add_definitions(-DOS_FREEBSD)
+elseif(CMAKE_SYSTEM_NAME MATCHES "NetBSD")
+  add_definitions(-DOS_NETBSD)
+elseif(CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
+  add_definitions(-DOS_OPENBSD)
+elseif(CMAKE_SYSTEM_NAME MATCHES "DragonFly")
+  add_definitions(-DOS_DRAGONFLYBSD)
+elseif(CMAKE_SYSTEM_NAME MATCHES "Android")
+  add_definitions(-DOS_ANDROID)
+elseif(CMAKE_SYSTEM_NAME MATCHES "Windows")
+  add_definitions(-DWIN32 -DOS_WIN -D_MBCS -DWIN64 -DNOMINMAX)
+  if(MINGW)
+    add_definitions(-D_WIN32_WINNT=_WIN32_WINNT_VISTA)
+  endif()
+endif()
+
+if(NOT WIN32)
+  add_definitions(-DROCKSDB_PLATFORM_POSIX -DROCKSDB_LIB_IO_POSIX)
+endif()
+
+option(WITH_FALLOCATE "build with fallocate" ON)
+
+if(WITH_FALLOCATE)
+  include(CheckCSourceCompiles)
+  CHECK_C_SOURCE_COMPILES("
+#include <fcntl.h>
+#include <linux/falloc.h>
+int main() {
+ int fd = open(\"/dev/null\", 0);
+ fallocate(fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE, 0, 1024);
+}
+" HAVE_FALLOCATE)
+  if(HAVE_FALLOCATE)
+    add_definitions(-DROCKSDB_FALLOCATE_PRESENT)
+  endif()
+endif()
+
+include(CheckFunctionExists)
+CHECK_FUNCTION_EXISTS(malloc_usable_size HAVE_MALLOC_USABLE_SIZE)
+if(HAVE_MALLOC_USABLE_SIZE)
+  add_definitions(-DROCKSDB_MALLOC_USABLE_SIZE)
+endif()
 
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${PROJECT_SOURCE_DIR}/third-party/gtest-1.7.0/fused-src)
-
-set(ROCKSDB_LIBS rocksdblib${ARTIFACT_SUFFIX})
-set(THIRDPARTY_LIBS ${THIRDPARTY_LIBS} gtest)
-set(SYSTEM_LIBS ${SYSTEM_LIBS} Shlwapi.lib Rpcrt4.lib)
-
-set(LIBS ${ROCKSDB_LIBS} ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+include_directories(SYSTEM ${PROJECT_SOURCE_DIR}/third-party/gtest-1.7.0/fused-src)
+find_package(Threads REQUIRED)
 
 add_subdirectory(third-party/gtest-1.7.0/fused-src/gtest)
 
 # Main library source code
+
 set(SOURCES
         db/auto_roll_logger.cc
         db/builder.cc
@@ -153,12 +384,6 @@ set(SOURCES
         memtable/skiplistrep.cc
         memtable/vectorrep.cc
         port/stack_trace.cc
-        port/win/io_win.cc
-        port/win/env_win.cc
-        port/win/env_default.cc
-        port/win/port_win.cc
-        port/win/win_logger.cc
-        port/win/xpress_win.cc
         table/adaptive_table_factory.cc
         table/block.cc
         table/block_based_filter_block.cc
@@ -192,7 +417,6 @@ set(SOURCES
         tools/dump/db_dump_tool.cc
         util/arena.cc
         util/bloom.cc
-        util/build_version.cc
         util/coding.cc
         util/compaction_job_stats_impl.cc
         util/comparator.cc
@@ -236,8 +460,6 @@ set(SOURCES
         util/status_message.cc
         util/string_util.cc
         util/sync_point.cc
-        util/testharness.cc
-        util/testutil.cc
         util/thread_local.cc
         util/threadpool.cc
         util/thread_status_impl.cc
@@ -283,7 +505,8 @@ set(SOURCES
         utilities/ttl/db_ttl_impl.cc
         utilities/write_batch_with_index/write_batch_with_index.cc
         utilities/write_batch_with_index/write_batch_with_index_internal.cc
-)
+        $<TARGET_OBJECTS:build_version>)
+
 
 # For test util library that is build only in DEBUG mode
 # and linked to tests. Add test only code that is not #ifdefed for Release here.
@@ -295,22 +518,70 @@ set(TESTUTIL_SOURCE
     util/thread_status_updater_debug.cc
 )
 
-add_library(rocksdblib${ARTIFACT_SUFFIX} ${SOURCES})
-set_target_properties(rocksdblib${ARTIFACT_SUFFIX} PROPERTIES COMPILE_FLAGS "/Fd${CMAKE_CFG_INTDIR}/rocksdblib${ARTIFACT_SUFFIX}.pdb")
-add_dependencies(rocksdblib${ARTIFACT_SUFFIX} GenerateBuildVersion)
+if(WIN32)
+  list(APPEND SOURCES
+    port/win/io_win.cc
+    port/win/env_win.cc
+    port/win/env_default.cc
+    port/win/port_win.cc
+    port/win/win_logger.cc
+    port/win/xpress_win.cc)
+else()
+  list(APPEND SOURCES
+    port/port_posix.cc
+    util/env_posix.cc
+    util/io_posix.cc)
+endif()
 
-add_library(rocksdb${ARTIFACT_SUFFIX} SHARED ${SOURCES})
-set_target_properties(rocksdb${ARTIFACT_SUFFIX} PROPERTIES COMPILE_FLAGS "-DROCKSDB_DLL -DROCKSDB_LIBRARY_EXPORTS /Fd${CMAKE_CFG_INTDIR}/rocksdb${ARTIFACT_SUFFIX}.pdb")
-add_dependencies(rocksdb${ARTIFACT_SUFFIX} GenerateBuildVersion)
-target_link_libraries(rocksdb${ARTIFACT_SUFFIX} ${LIBS})
+set(ROCKSDB_STATIC_LIB rocksdb${ARTIFACT_SUFFIX})
+set(ROCKSDB_SHARED_LIB rocksdb-shared${ARTIFACT_SUFFIX})
+set(ROCKSDB_IMPORT_LIB ${ROCKSDB_SHARED_LIB})
+if(WIN32)
+  set(SYSTEM_LIBS ${SYSTEM_LIBS} Shlwapi.lib Rpcrt4.lib)
+  set(LIBS ${ROCKSDB_STATIC_LIB} ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+else()
+  set(SYSTEM_LIBS ${CMAKE_THREAD_LIBS_INIT})
+  set(LIBS ${ROCKSDB_SHARED_LIB} ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
 
-if (DEFINED JNI)
-  if (${JNI} EQUAL 1)
-    message(STATUS "JNI library is enabled")
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/java)
-  else()
-    message(STATUS "JNI library is disabled")
+  add_library(${ROCKSDB_SHARED_LIB} SHARED ${SOURCES})
+  target_link_libraries(${ROCKSDB_SHARED_LIB}
+    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+  set_target_properties(${ROCKSDB_SHARED_LIB} PROPERTIES
+                        LINKER_LANGUAGE CXX
+                        VERSION ${ROCKSDB_VERSION}
+                        SOVERSION ${ROCKSDB_VERSION_MAJOR}
+                        CXX_STANDARD 11
+                        OUTPUT_NAME "rocksdb")
+endif()
+option(WITH_LIBRADOS "Build with librados" OFF)
+if(WITH_LIBRADOS)
+  list(APPEND SOURCES
+    utilities/env_librados.cc)
+  list(APPEND THIRDPARTY_LIBS rados)
+endif()
+
+add_library(${ROCKSDB_STATIC_LIB} STATIC ${SOURCES})
+target_link_libraries(${ROCKSDB_STATIC_LIB}
+  ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+
+if(WIN32)
+  add_library(${ROCKSDB_IMPORT_LIB} SHARED ${SOURCES})
+  target_link_libraries(${ROCKSDB_IMPORT_LIB}
+    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+  set_target_properties(${ROCKSDB_IMPORT_LIB} PROPERTIES
+    COMPILE_DEFINITIONS "ROCKSDB_DLL;ROCKSDB_LIBRARY_EXPORTS")
+  if(MSVC)
+    set_target_properties(${ROCKSDB_STATIC_LIB} PROPERTIES
+      COMPILE_FLAGS "/Fd${CMAKE_CFG_INTDIR}/${ROCKSDB_STATIC_LIB}.pdb")
+    set_target_properties(${ROCKSDB_IMPORT_LIB} PROPERTIES
+      COMPILE_FLAGS "/Fd${CMAKE_CFG_INTDIR}/${ROCKSDB_IMPORT_LIB}.pdb")
   endif()
+endif()
+
+option(WITH_JNI "build with JNI" OFF)
+if(WITH_JNI OR JNI)
+  message(STATUS "JNI library is enabled")
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/java)
 else()
   message(STATUS "JNI library is disabled")
 endif()
@@ -329,9 +600,6 @@ set(APPS
         util/cache_bench.cc
         utilities/persistent_cache/hash_table_bench.cc
 )
-
-set(C_TESTS db/c_test.c)
-
 set(TESTS
         db/auto_roll_logger_test.cc
         db/column_family_test.cc
@@ -458,7 +726,9 @@ endforeach(sourcefile ${EXES})
 # test utilities are only build in debug
 set(TESTUTILLIB testutillib${ARTIFACT_SUFFIX})
 add_library(${TESTUTILLIB} STATIC ${TESTUTIL_SOURCE})
-set_target_properties(${TESTUTILLIB} PROPERTIES COMPILE_FLAGS "/Fd${CMAKE_CFG_INTDIR}/testutillib${ARTIFACT_SUFFIX}.pdb")
+if(MSVC)
+  set_target_properties(${TESTUTILLIB} PROPERTIES COMPILE_FLAGS "/Fd${CMAKE_CFG_INTDIR}/testutillib${ARTIFACT_SUFFIX}.pdb")
+endif()
 set_target_properties(${TESTUTILLIB}
       PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD_RELEASE 1
       EXCLUDE_FROM_DEFAULT_BUILD_MINRELEASE 1
@@ -481,6 +751,7 @@ foreach(sourcefile ${TEST_EXES})
 endforeach(sourcefile ${TEST_EXES})
 
 # C executables must link to a shared object
+set(C_TESTS db/c_test.c)
 set(C_TEST_EXES ${C_TESTS})
 
 foreach(sourcefile ${C_TEST_EXES})
@@ -494,3 +765,13 @@ foreach(sourcefile ${C_TEST_EXES})
       )
     target_link_libraries(${exename}${ARTIFACT_SUFFIX} rocksdb${ARTIFACT_SUFFIX} testutillib${ARTIFACT_SUFFIX})
 endforeach(sourcefile ${C_TEST_EXES})
+
+# Installation and packaging for Linux
+if(NOT WIN32)
+install(TARGETS ${ROCKSDB_STATIC_LIB} COMPONENT devel ARCHIVE DESTINATION lib64)
+install(TARGETS ${ROCKSDB_SHARED_LIB} COMPONENT runtime DESTINATION lib64)
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/rocksdb/"
+        COMPONENT devel
+        DESTINATION include/rocksdb)
+set(CMAKE_INSTALL_PREFIX /usr)
+endif()

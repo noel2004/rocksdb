@@ -1571,12 +1571,10 @@ void rocksdb_options_set_compression_per_level(rocksdb_options_t* opt,
 }
 
 void rocksdb_options_set_compression_options(rocksdb_options_t* opt, int w_bits,
-                                             int level, int strategy,
-                                             int max_dict_bytes) {
+                                             int level, int strategy) {
   opt->rep.compression_opts.window_bits = w_bits;
   opt->rep.compression_opts.level = level;
   opt->rep.compression_opts.strategy = strategy;
-  opt->rep.compression_opts.max_dict_bytes = max_dict_bytes;
 }
 
 void rocksdb_options_set_prefix_extractor(
@@ -1690,6 +1688,11 @@ void rocksdb_options_set_verify_checksums_in_compaction(
   opt->rep.verify_checksums_in_compaction = v;
 }
 
+void rocksdb_options_set_filter_deletes(
+    rocksdb_options_t* opt, unsigned char v) {
+//    opt->rep.filter_deletes = v;
+}
+
 void rocksdb_options_set_max_sequential_skip_in_iterations(
     rocksdb_options_t* opt, uint64_t v) {
   opt->rep.max_sequential_skip_in_iterations = v;
@@ -1790,6 +1793,16 @@ void rocksdb_options_set_memtable_vector_rep(rocksdb_options_t *opt) {
     factory = new rocksdb::VectorRepFactory;
   }
   opt->rep.memtable_factory.reset(factory);
+}
+
+void rocksdb_options_set_memtable_prefix_bloom_bits(
+    rocksdb_options_t* opt, uint32_t v) {
+//    opt->rep.memtable_prefix_bloom_bits = v;
+}
+
+void rocksdb_options_set_memtable_prefix_bloom_probes(
+    rocksdb_options_t* opt, uint32_t v) {
+//    opt->rep.memtable_prefix_bloom_probes = v;
 }
 
 void rocksdb_options_set_memtable_prefix_bloom_size_ratio(
