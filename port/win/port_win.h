@@ -45,7 +45,7 @@
 #undef GetCurrentTime
 #undef DeleteFile
 
-typedef SSIZE_T ssize_t;
+//typedef SSIZE_T ssize_t;
 
 // size_t printf formatting named in the manner of C99 standard formatting
 // strings such as PRIu64
@@ -54,7 +54,9 @@ typedef SSIZE_T ssize_t;
 #define ROCKSDB_PRIszt "Iu"
 #endif
 
+#ifndef __GNUC__
 #define __attribute__(A)
+#endif
 
 // Thread local storage on Linux
 // There is thread_local in C++11
@@ -229,7 +231,7 @@ extern void InitOnce(OnceType* once, void (*initializer)());
 
 static inline void AsmVolatilePause() {
 #if defined(_M_IX86) || defined(_M_X64)
-  YieldProcessor();
+  //YieldProcessor();
 #endif
   // it would be nice to get "wfe" on ARM here
 }
